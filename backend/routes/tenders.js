@@ -13,4 +13,21 @@ router.get("/", async (req, res) => {
   }
 });
 
+// TEMP TEST ROUTE
+router.get("/seed-test", async (req, res) => {
+  const sample = await Tender.create({
+    title: "Supply of Laboratory Equipment",
+    category: "Laboratory Equipment",
+    organization: "Kerala University",
+    location: "Thiruvananthapuram, Kerala",
+    closesOn: new Date("2026-03-30"),
+    estimatedValue: 500000,
+    status: "active",
+    source: "Manual Test"
+  });
+
+  res.json(sample);
+});
+
+
 module.exports = router;
