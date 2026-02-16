@@ -1,161 +1,175 @@
-import React from 'react';
-import { useNavigate } from 'react-router-dom';
-import { 
-  LayoutDashboard, 
-  FileText, 
-  Users, 
-  Settings, 
-  LogOut,
-  TrendingUp,
-  MapPin,
-  Clock
-} from 'lucide-react';
+import React, { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
+
+function isClosingSoon(closeDateStr, days = 7) {
+  if (!closeDateStr) return false;
+  const d = new Date(closeDateStr);
+  if (Number.isNaN(d.getTime())) return false;
+  const now = new Date();
+  const diffDays = (d.getTime() - now.getTime()) / (1000 * 60 * 60 * 24);
+  return diffDays >= 0 && diffDays <= days;
+}
+
+function normalizeTender(t) {
+  return {
+    id: t._id || t.id || t.tenderId || t.tender_id,
+    title: t.title || t.name || t.tenderTitle || "Untitled Tender",
+    location: t.location || t.city || "",
+    state: t.state || "",
+    closeDate: t.closeDate || t.closingDate || t.bidEndDate || t.endDate || "",
+    status: (t.status || "").toLowerCase(),
+    raw: t,
+  };
+}
 
 const Dashboard = () => {
   const navigate = useNavigate();
-  const user = JSON.parse(localStorage.getItem('user') || '{}');
+  const API_BASE = import.meta.env.VITE_API_URL;
 
-  const handleLogout = () => {
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
-    navigate('/login');
+  const [tenders, setTenders] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  const fetchTenders = async () => {
+    setError("");
+    setLoading(true);
+
+    try {
+      if (!API_BASE) throw new Error("VITE_API_URL is not set");
+
+      const token = localStorage.getItem("token");
+
+      const res = await fetch(`${API_BASE}/tenders`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(`Failed to load tenders (${res.status}): ${txt}`);
+      }
+
+      const data = await res.json();
+      const list = Array.isArray(data) ? data : data.tenders || [];
+      setTenders(list.map(normalizeTender));
+    } catch (e) {
+      console.error(e);
+      setError(e.message || "Failed to load tenders");
+      setTenders([]);
+    } finally {
+      setLoading(false);
+    }
   };
 
+  useEffect(() => {
+    fetchTenders();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [API_BASE]);
+
+  const stats = useMemo(() => {
+    const total = tenders.length;
+    let active = 0;
+    let kerala = 0;
+    let closingSoon = 0;
+
+    for (const t of tenders) {
+      const closing = isClosingSoon(t.closeDate, 7);
+      const computedStatus =
+        t.status === "active"
+          ? "active"
+          : closing
+          ? "closing_soon"
+          : t.status || "active";
+
+      if (computedStatus === "active") active += 1;
+      if (computedStatus === "closing_soon") closingSoon += 1;
+
+      const loc = `${t.location} ${t.state}`.toLowerCase();
+      if (loc.includes("kerala")) kerala += 1;
+    }
+
+    return { total, active, kerala, closingSoon };
+  }, [tenders]);
+
+  const recent = useMemo(() => {
+    // show latest 5 by close date if available, else first 5
+    const sorted = [...tenders].sort((a, b) => {
+      const da = a.closeDate ? new Date(a.closeDate).getTime() : 0;
+      const db = b.closeDate ? new Date(b.closeDate).getTime() : 0;
+      return db - da;
+    });
+    return sorted.slice(0, 5);
+  }, [tenders]);
+
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
-      {/* Sidebar */}
-      <aside className="fixed left-0 top-0 h-full w-64 bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700">
-        <div className="p-6 border-b border-gray-200 dark:border-gray-700">
-          <h1 className="text-2xl font-bold text-primary-600">Seacco</h1>
-          <p className="text-sm text-gray-500">Tender Platform</p>
+    <div className="p-6">
+      <div className="mb-6">
+        <h1 className="text-3xl font-bold">Dashboard</h1>
+        <p className="text-gray-600 mt-1">Welcome back</p>
+      </div>
+
+      {error && (
+        <div className="mb-5 p-3 rounded-lg bg-red-100 text-red-700 text-sm">
+          {error}
         </div>
-        
-        <nav className="p-4 space-y-2">
-          <a href="#" className="flex items-center gap-3 px-4 py-3 bg-primary-50 text-primary-600 rounded-lg">
-            <LayoutDashboard className="w-5 h-5" />
-            Dashboard
-          </a>
-          <a 
-  href="#" 
-  onClick={(e) => {
-    e.preventDefault();
-    navigate('/tenders');
-  }}
-  className="flex items-center gap-3 px-4 py-3 text-gray-600 hover:bg-gray-50 rounded-lg"
->
-    <FileText className="w-5 h-5" />
-  Tenders
-</a>
-  <a 
-  href="#" 
-  onClick={(e) => {
-    e.preventDefault();
-    navigate('/settings');
-  }}
-  className="flex items-center gap-3 px-4 py-3 text-gray-600 hover:bg-gray-50 rounded-lg cursor-pointer"
->
-  <Settings className="w-5 h-5" />
-  Settings
-</a>
+      )}
 
-          <a href="#" className="flex items-center gap-3 px-4 py-3 text-gray-600 hover:bg-gray-50 rounded-lg">
-            <Users className="w-5 h-5" />
-            Users
-          </a>
-          <a href="#" className="flex items-center gap-3 px-4 py-3 text-gray-600 hover:bg-gray-50 rounded-lg">
-            <Settings className="w-5 h-5" />
-            Settings
-          </a>
-        </nav>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+        <div className="p-5 rounded-2xl border bg-white">
+          <div className="text-sm text-gray-500">Total Tenders</div>
+          <div className="text-3xl font-bold">{stats.total}</div>
+        </div>
 
-        <div className="absolute bottom-0 left-0 right-0 p-4 border-t border-gray-200 dark:border-gray-700">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="w-10 h-10 bg-primary-100 rounded-full flex items-center justify-center">
-              <span className="text-primary-600 font-bold">{user.name?.charAt(0) || 'U'}</span>
-            </div>
-            <div>
-              <p className="text-sm font-medium text-gray-900 dark:text-white">{user.name}</p>
-              <p className="text-xs text-gray-500">{user.email}</p>
-            </div>
-          </div>
-          <button 
-            onClick={handleLogout}
-            className="flex items-center gap-2 text-red-600 hover:text-red-700 text-sm"
+        <div className="p-5 rounded-2xl border bg-white">
+          <div className="text-sm text-gray-500">Active Tenders</div>
+          <div className="text-3xl font-bold">{stats.active}</div>
+        </div>
+
+        <div className="p-5 rounded-2xl border bg-white">
+          <div className="text-sm text-gray-500">Kerala Tenders</div>
+          <div className="text-3xl font-bold">{stats.kerala}</div>
+        </div>
+
+        <div className="p-5 rounded-2xl border bg-white">
+          <div className="text-sm text-gray-500">Closing Soon</div>
+          <div className="text-3xl font-bold">{stats.closingSoon}</div>
+        </div>
+      </div>
+
+      <div className="p-5 rounded-2xl border bg-white">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-bold">Recent Tenders</h2>
+          <button
+            className="px-3 py-2 rounded-lg border hover:bg-gray-50"
+            onClick={() => navigate("/tenders")}
           >
-            <LogOut className="w-4 h-4" />
-            Logout
+            View all
           </button>
         </div>
-      </aside>
 
-      {/* Main Content */}
-      <main className="ml-64 p-8">
-        <div className="mb-8">
-          <h2 className="text-3xl font-bold text-gray-900 dark:text-white">Dashboard</h2>
-          <p className="text-gray-600 dark:text-gray-400">Welcome back, {user.name}</p>
-        </div>
-
-        {/* Stats Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-          <div className="bg-white dark:bg-gray-800 p-6 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-gray-500">Total Tenders</p>
-                <p className="text-2xl font-bold text-gray-900 dark:text-white">0</p>
-              </div>
-              <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
-                <FileText className="w-6 h-6 text-blue-600" />
-              </div>
-            </div>
+        {loading ? (
+          <div className="text-gray-600">Loading tenders...</div>
+        ) : recent.length === 0 ? (
+          <div className="text-gray-600">
+            No tenders found. The scraper will populate this soon.
           </div>
-
-          <div className="bg-white dark:bg-gray-800 p-6 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-gray-500">Active Tenders</p>
-                <p className="text-2xl font-bold text-gray-900 dark:text-white">0</p>
+        ) : (
+          <div className="space-y-3">
+            {recent.map((t) => (
+              <div
+                key={t.id || `${t.title}-${t.closeDate}`}
+                className="p-4 rounded-xl border hover:shadow-sm transition cursor-pointer"
+                onClick={() => navigate(`/tenders/${t.id}`)}
+              >
+                <div className="font-semibold">{t.title}</div>
+                <div className="text-sm text-gray-600 mt-1">
+                  {[t.location, t.state].filter(Boolean).join(", ")}
+                  {t.closeDate ? ` • Closes: ${String(t.closeDate).slice(0, 10)}` : ""}
+                </div>
               </div>
-              <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
-                <TrendingUp className="w-6 h-6 text-green-600" />
-              </div>
-            </div>
+            ))}
           </div>
-
-          <div className="bg-white dark:bg-gray-800 p-6 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-gray-500">Kerala Tenders</p>
-                <p className="text-2xl font-bold text-gray-900 dark:text-white">0</p>
-              </div>
-              <div className="w-12 h-12 bg-purple-100 rounded-lg flex items-center justify-center">
-                <MapPin className="w-6 h-6 text-purple-600" />
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-white dark:bg-gray-800 p-6 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-gray-500">Closing Soon</p>
-                <p className="text-2xl font-bold text-gray-900 dark:text-white">0</p>
-              </div>
-              <div className="w-12 h-12 bg-amber-100 rounded-lg flex items-center justify-center">
-                <Clock className="w-6 h-6 text-amber-600" />
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Recent Tenders */}
-        <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700">
-          <div className="p-6 border-b border-gray-200 dark:border-gray-700">
-            <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Recent Tenders</h3>
-          </div>
-          <div className="p-6 text-center text-gray-500">
-            <p>No tenders found. The scraper will populate this soon.</p>
-          </div>
-        </div>
-      </main>
+        )}
+      </div>
     </div>
   );
 };

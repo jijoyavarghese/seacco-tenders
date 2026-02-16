@@ -1,208 +1,323 @@
-import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { 
-  Search, 
-  Filter, 
-  MapPin, 
-  Calendar, 
-  Building2, 
-  ArrowLeft,
-  LogOut
-} from 'lucide-react';
+import React, { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { Search, Filter, MapPin, Building2, Calendar, ArrowLeft } from "lucide-react";
+
+function formatINR(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return "";
+  return new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency: "INR",
+    maximumFractionDigits: 0,
+  }).format(num);
+}
+
+function isClosingSoon(closeDateStr, days = 7) {
+  if (!closeDateStr) return false;
+  const d = new Date(closeDateStr);
+  if (Number.isNaN(d.getTime())) return false;
+  const now = new Date();
+  const diffDays = (d.getTime() - now.getTime()) / (1000 * 60 * 60 * 24);
+  return diffDays >= 0 && diffDays <= days;
+}
+
+function normalizeTender(t) {
+  // Support multiple backend field names safely
+  return {
+    id: t._id || t.id || t.tenderId || t.tender_id,
+    title: t.title || t.name || t.tenderTitle || "Untitled Tender",
+    department: t.department || t.organization || t.org || "",
+    location: t.location || t.city || "",
+    state: t.state || "",
+    closeDate: t.closeDate || t.closingDate || t.bidEndDate || t.endDate || "",
+    category: t.category || t.segment || "",
+    website: t.website || t.source || "",
+    url: t.url || t.link || "",
+    status: (t.status || "").toLowerCase(), // "active" etc
+    estimatedValue:
+      t.estimatedValue ?? t.estimated_cost ?? t.value ?? t.amount ?? null,
+    raw: t,
+  };
+}
 
 const Tenders = () => {
   const navigate = useNavigate();
+
+  const API_BASE = import.meta.env.VITE_API_URL; // e.g. https://seacco-backend.onrender.com/api
+
   const [tenders, setTenders] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState('');
-  const user = JSON.parse(localStorage.getItem('user') || '{}');
+  const [error, setError] = useState("");
 
-  useEffect(() => {
-    // Mock data for now - replace with API call later
-    const mockTenders = [
-      {
-        id: 1,
-        title: 'Supply of Laboratory Equipment for Chemistry Lab',
-        organization: 'Kerala University',
-        location: 'Thiruvananthapuram, Kerala',
-        category: 'Laboratory Equipment',
-        value: '₹5,00,000',
-        closingDate: '2024-03-15',
-        status: 'active'
-      },
-      {
-        id: 2,
-        title: 'Purchase of Chemicals and Reagents',
-        organization: 'Government Medical College',
-        location: 'Kochi, Kerala',
-        category: 'Chemicals',
-        value: '₹2,50,000',
-        closingDate: '2024-03-20',
-        status: 'active'
-      },
-      {
-        id: 3,
-        title: 'Scientific Instruments for Research Center',
-        organization: 'IIT Madras',
-        location: 'Chennai, Tamil Nadu',
-        category: 'Scientific Equipment',
-        value: '₹15,00,000',
-        closingDate: '2024-03-10',
-        status: 'closing_soon'
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all"); // all | active | closing_soon
+  const [keralaOnly, setKeralaOnly] = useState(false);
+
+  const fetchTenders = async () => {
+    setError("");
+    setLoading(true);
+
+    try {
+      if (!API_BASE) throw new Error("VITE_API_URL is not set");
+
+      const token = localStorage.getItem("token");
+
+      const res = await fetch(`${API_BASE}/tenders`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(`Failed to load tenders (${res.status}): ${txt}`);
       }
-    ];
-    
-    setTimeout(() => {
-      setTenders(mockTenders);
-      setLoading(false);
-    }, 1000);
-  }, []);
 
-  const handleLogout = () => {
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
-    navigate('/login');
+      const data = await res.json();
+      const list = Array.isArray(data) ? data : data.tenders || [];
+      setTenders(list.map(normalizeTender));
+    } catch (e) {
+      console.error(e);
+      setError(e.message || "Failed to load tenders");
+      setTenders([]);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const filteredTenders = tenders.filter(tender => 
-    tender.title.toLowerCase().includes(search.toLowerCase()) ||
-    tender.organization.toLowerCase().includes(search.toLowerCase())
-  );
+  useEffect(() => {
+    fetchTenders();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [API_BASE]);
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+
+    return tenders.filter((t) => {
+      // status derived
+      const closingSoon = isClosingSoon(t.closeDate, 7);
+      const computedStatus =
+        t.status === "active"
+          ? "active"
+          : closingSoon
+          ? "closing_soon"
+          : t.status || "active";
+
+      // status filter
+      if (statusFilter !== "all") {
+        if (statusFilter === "active" && computedStatus !== "active") return false;
+        if (statusFilter === "closing_soon" && computedStatus !== "closing_soon")
+          return false;
+      }
+
+      // kerala filter (checks location or state)
+      if (keralaOnly) {
+        const loc = `${t.location} ${t.state}`.toLowerCase();
+        if (!loc.includes("kerala")) return false;
+      }
+
+      // search filter
+      if (!q) return true;
+      const hay = `${t.title} ${t.department} ${t.location} ${t.state} ${t.category}`.toLowerCase();
+      return hay.includes(q);
+    });
+  }, [tenders, search, statusFilter, keralaOnly]);
+
+  const stats = useMemo(() => {
+    const total = filtered.length;
+
+    let active = 0;
+    let closingSoon = 0;
+    let kerala = 0;
+
+    for (const t of filtered) {
+      const closing = isClosingSoon(t.closeDate, 7);
+      const computedStatus =
+        t.status === "active"
+          ? "active"
+          : closing
+          ? "closing_soon"
+          : t.status || "active";
+
+      if (computedStatus === "active") active += 1;
+      if (computedStatus === "closing_soon") closingSoon += 1;
+
+      const loc = `${t.location} ${t.state}`.toLowerCase();
+      if (loc.includes("kerala")) kerala += 1;
+    }
+
+    return { total, active, closingSoon, kerala };
+  }, [filtered]);
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
+    <div className="p-6">
       {/* Header */}
-      <header className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 sticky top-0 z-10">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-16">
-            <div className="flex items-center gap-4">
-              <button 
-                onClick={() => navigate('/')}
-                className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg"
-              >
-                <ArrowLeft className="w-5 h-5" />
-              </button>
-              <h1 className="text-xl font-bold text-gray-900 dark:text-white">Tenders</h1>
-            </div>
-            
-            <div className="flex items-center gap-4">
-              <span className="text-sm text-gray-600 dark:text-gray-400">{user.email}</span>
-              <button 
-                onClick={handleLogout}
-                className="p-2 text-red-600 hover:bg-red-50 rounded-lg"
-              >
-                <LogOut className="w-5 h-5" />
-              </button>
-            </div>
-          </div>
-        </div>
-      </header>
+      <div className="flex items-center gap-3 mb-6">
+        <button
+          className="p-2 rounded-lg hover:bg-gray-100"
+          onClick={() => navigate(-1)}
+          title="Back"
+        >
+          <ArrowLeft className="w-5 h-5" />
+        </button>
+        <h1 className="text-2xl font-bold">Tenders</h1>
 
-      {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Search and Filter */}
-        <div className="mb-8 flex gap-4">
-          <div className="flex-1 relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-            <input
-              type="text"
-              placeholder="Search tenders..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="w-full pl-10 pr-4 py-3 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg dark:text-white"
-            />
-          </div>
-          <button className="px-4 py-3 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg flex items-center gap-2 text-gray-700 dark:text-gray-300">
-            <Filter className="w-5 h-5" />
-            Filter
+        <div className="ml-auto flex gap-2">
+          <button
+            className="px-3 py-2 rounded-lg border hover:bg-gray-50"
+            onClick={fetchTenders}
+          >
+            Refresh
           </button>
         </div>
+      </div>
 
-        {/* Stats */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
-          <div className="bg-white dark:bg-gray-800 p-4 rounded-lg border border-gray-200 dark:border-gray-700">
-            <p className="text-sm text-gray-500">Total</p>
-            <p className="text-2xl font-bold text-gray-900 dark:text-white">{tenders.length}</p>
-          </div>
-          <div className="bg-white dark:bg-gray-800 p-4 rounded-lg border border-gray-200 dark:border-gray-700">
-            <p className="text-sm text-gray-500">Active</p>
-            <p className="text-2xl font-bold text-green-600">{tenders.filter(t => t.status === 'active').length}</p>
-          </div>
-          <div className="bg-white dark:bg-gray-800 p-4 rounded-lg border border-gray-200 dark:border-gray-700">
-            <p className="text-sm text-gray-500">Closing Soon</p>
-            <p className="text-2xl font-bold text-amber-600">{tenders.filter(t => t.status === 'closing_soon').length}</p>
-          </div>
-          <div className="bg-white dark:bg-gray-800 p-4 rounded-lg border border-gray-200 dark:border-gray-700">
-            <p className="text-sm text-gray-500">Kerala</p>
-            <p className="text-2xl font-bold text-purple-600">{tenders.filter(t => t.location.includes('Kerala')).length}</p>
-          </div>
+      {/* Search + Filter */}
+      <div className="flex flex-col md:flex-row gap-3 mb-5">
+        <div className="flex-1 relative">
+          <Search className="w-5 h-5 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+          <input
+            className="w-full pl-10 pr-3 py-3 rounded-xl border focus:outline-none focus:ring-2 focus:ring-indigo-200"
+            placeholder="Search tenders..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
         </div>
 
-        {/* Tenders List */}
-        {loading ? (
-          <div className="text-center py-12">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600 mx-auto"></div>
-            <p className="mt-4 text-gray-600">Loading tenders...</p>
+        <div className="flex gap-2">
+          <div className="relative">
+            <Filter className="w-5 h-5 text-gray-600 absolute left-3 top-1/2 -translate-y-1/2" />
+            <select
+              className="pl-10 pr-8 py-3 rounded-xl border bg-white focus:outline-none"
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+            >
+              <option value="all">All</option>
+              <option value="active">Active</option>
+              <option value="closing_soon">Closing Soon</option>
+            </select>
           </div>
-        ) : (
-          <div className="space-y-4">
-            {filteredTenders.map((tender) => (
-              <div 
-  key={tender.id}
-  onClick={() => navigate(`/tenders/${tender.id}`)}
-  className="bg-white dark:bg-gray-800 p-6 rounded-xl border border-gray-200 dark:border-gray-700 hover:shadow-lg transition-shadow cursor-pointer"
->
-                <div className="flex items-start justify-between">
+
+          <label className="flex items-center gap-2 px-3 py-3 rounded-xl border bg-white">
+            <input
+              type="checkbox"
+              checked={keralaOnly}
+              onChange={(e) => setKeralaOnly(e.target.checked)}
+            />
+            <span className="text-sm">Kerala only</span>
+          </label>
+        </div>
+      </div>
+
+      {/* Error */}
+      {error && (
+        <div className="mb-5 p-3 rounded-lg bg-red-100 text-red-700 text-sm">
+          {error}
+        </div>
+      )}
+
+      {/* Stats */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+        <div className="p-4 rounded-xl border bg-white">
+          <div className="text-sm text-gray-500">Total</div>
+          <div className="text-3xl font-bold">{stats.total}</div>
+        </div>
+        <div className="p-4 rounded-xl border bg-white">
+          <div className="text-sm text-gray-500">Active</div>
+          <div className="text-3xl font-bold text-green-600">{stats.active}</div>
+        </div>
+        <div className="p-4 rounded-xl border bg-white">
+          <div className="text-sm text-gray-500">Closing Soon</div>
+          <div className="text-3xl font-bold text-amber-600">{stats.closingSoon}</div>
+        </div>
+        <div className="p-4 rounded-xl border bg-white">
+          <div className="text-sm text-gray-500">Kerala</div>
+          <div className="text-3xl font-bold text-purple-600">{stats.kerala}</div>
+        </div>
+      </div>
+
+      {/* List */}
+      {loading ? (
+        <div className="text-gray-600">Loading tenders...</div>
+      ) : filtered.length === 0 ? (
+        <div className="text-gray-600">No tenders found matching your filters.</div>
+      ) : (
+        <div className="space-y-4">
+          {filtered.map((t) => {
+            const closingSoon = isClosingSoon(t.closeDate, 7);
+            const computedStatus =
+              t.status === "active"
+                ? "active"
+                : closingSoon
+                ? "closing_soon"
+                : t.status || "active";
+
+            return (
+              <div
+                key={t.id || `${t.title}-${t.closeDate}`}
+                className="p-5 rounded-2xl border bg-white hover:shadow-sm transition cursor-pointer"
+                onClick={() => navigate(`/tenders/${t.id}`)}
+              >
+                <div className="flex items-start gap-4">
                   <div className="flex-1">
-                    <div className="flex items-center gap-2 mb-2">
-                      <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                        tender.status === 'active' 
-                          ? 'bg-green-100 text-green-800' 
-                          : 'bg-amber-100 text-amber-800'
-                      }`}>
-                        {tender.status === 'active' ? 'Active' : 'Closing Soon'}
+                    <div className="flex flex-wrap items-center gap-2 mb-2">
+                      <span
+                        className={`px-3 py-1 rounded-full text-xs font-semibold ${
+                          computedStatus === "active"
+                            ? "bg-green-100 text-green-700"
+                            : "bg-amber-100 text-amber-700"
+                        }`}
+                      >
+                        {computedStatus === "active" ? "Active" : "Closing Soon"}
                       </span>
-                      <span className="px-2 py-1 bg-gray-100 text-gray-700 rounded-full text-xs font-medium">
-                        {tender.category}
-                      </span>
+
+                      {t.category && (
+                        <span className="px-3 py-1 rounded-full text-xs font-semibold bg-gray-100 text-gray-700">
+                          {t.category}
+                        </span>
+                      )}
                     </div>
-                    
-                    <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
-                      {tender.title}
-                    </h3>
-                    
-                    <div className="flex flex-wrap items-center gap-4 text-sm text-gray-600 dark:text-gray-400">
-                      <span className="flex items-center gap-1">
-                        <Building2 className="w-4 h-4" />
-                        {tender.organization}
-                      </span>
-                      <span className="flex items-center gap-1">
-                        <MapPin className="w-4 h-4" />
-                        {tender.location}
-                      </span>
-                      <span className="flex items-center gap-1">
-                        <Calendar className="w-4 h-4" />
-                        Closes: {tender.closingDate}
-                      </span>
+
+                    <h3 className="text-xl font-bold mb-2">{t.title}</h3>
+
+                    <div className="flex flex-wrap gap-x-5 gap-y-2 text-sm text-gray-600">
+                      {t.department && (
+                        <span className="inline-flex items-center gap-2">
+                          <Building2 className="w-4 h-4" />
+                          {t.department}
+                        </span>
+                      )}
+
+                      {(t.location || t.state) && (
+                        <span className="inline-flex items-center gap-2">
+                          <MapPin className="w-4 h-4" />
+                          {[t.location, t.state].filter(Boolean).join(", ")}
+                        </span>
+                      )}
+
+                      {t.closeDate && (
+                        <span className="inline-flex items-center gap-2">
+                          <Calendar className="w-4 h-4" />
+                          Closes: {String(t.closeDate).slice(0, 10)}
+                        </span>
+                      )}
                     </div>
                   </div>
-                  
-                  <div className="text-right">
-                    <p className="text-lg font-bold text-primary-600">{tender.value}</p>
-                    <p className="text-xs text-gray-500">Estimated Value</p>
+
+                  <div className="text-right min-w-[140px]">
+                    {t.estimatedValue != null && (
+                      <>
+                        <div className="text-lg font-extrabold text-indigo-600">
+                          {formatINR(t.estimatedValue)}
+                        </div>
+                        <div className="text-xs text-gray-500">Estimated Value</div>
+                      </>
+                    )}
                   </div>
                 </div>
               </div>
-            ))}
-            
-            {filteredTenders.length === 0 && (
-              <div className="text-center py-12 text-gray-500">
-                <p>No tenders found matching your search.</p>
-              </div>
-            )}
-          </div>
-        )}
-      </main>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 };
