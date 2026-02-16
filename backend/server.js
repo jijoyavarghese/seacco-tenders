@@ -7,14 +7,25 @@ const authRoutes = require('./routes/auth');
 
 const app = express();
 
-// Hardcoded settings
-const PORT = 5001;
-const MONGODB_URI = 'mongodb+srv://seacco_admin:0smMi2nEmxERW4Pd@cluster0.rt4bs9b.mongodb.net/?appName=Cluster0'; // ← REPLACE THIS
+const PORT = process.env.PORT || 5001;
+
+const MONGODB_URI = process.env.MONGODB_URI;
+if (!MONGODB_URI) {
+  console.error("❌ MONGODB_URI is not set");
+  process.exit(1);
+}
 
 // Security middleware
 app.use(helmet());
+
+const allowedOrigins = [
+  process.env.FRONTEND_URL,
+  'http://localhost:3000',
+  'http://localhost:5173'
+].filter(Boolean);
+
 app.use(cors({
-  origin: ['http://localhost:3000', 'http://localhost:5173'],
+  origin: allowedOrigins,
   credentials: true
 }));
 
@@ -29,14 +40,13 @@ app.use(express.json({ limit: '10mb' }));
 
 // Health check
 app.get('/api/health', (req, res) => {
-  res.json({ 
-    status: 'OK', 
+  res.json({
+    status: 'OK',
     timestamp: new Date().toISOString(),
     uptime: process.uptime()
   });
 });
 
-// Add this line after the health check route
 app.use('/api/auth', authRoutes);
 
 // Database connection
@@ -44,9 +54,10 @@ mongoose.connect(MONGODB_URI)
   .then(() => console.log('✅ Connected to MongoDB'))
   .catch(err => {
     console.error('❌ MongoDB connection error:', err);
+    process.exit(1);
   });
 
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
-  console.log(`📊 Environment: development`);
+  console.log(`📊 Environment: ${process.env.NODE_ENV || 'development'}`);
 });
