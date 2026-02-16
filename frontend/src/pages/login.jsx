@@ -13,7 +13,10 @@ const Login = () => {
     setError('');
     
     try {
-      const response = await fetch('http://localhost:5001/api/auth/login', {
+      const API_BASE = import.meta.env.VITE_API_URL;
+
+const response = await fetch(`${API_BASE}/auth/login`, {
+
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -97,7 +100,7 @@ else {
           </form>
 
           <div className="mt-6 text-center text-sm text-gray-500 dark:text-gray-400">
-            <p>Backend: http://localhost:5001/api</p>
+            <p>Backend: {import.meta.env.VITE_API_URL}</p>
           </div>
         </div>
       </div>
