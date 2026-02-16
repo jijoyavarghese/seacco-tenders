@@ -40,8 +40,11 @@ app.use(express.json({ limit: '10mb' }));
 
 // Health check
 app.get('/api/health', (req, res) => {
+  const dbState = mongoose.connection.readyState;
+
   res.json({
     status: 'OK',
+    dbStatus: dbState === 1 ? 'connected' : 'not connected',
     timestamp: new Date().toISOString(),
     uptime: process.uptime()
   });
