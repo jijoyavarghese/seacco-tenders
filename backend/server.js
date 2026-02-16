@@ -4,6 +4,8 @@ const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const authRoutes = require('./routes/auth');
+const tenderRoutes = require("./routes/tenders");
+
 
 const app = express();
 
@@ -51,6 +53,8 @@ app.get('/api/health', (req, res) => {
 });
 
 app.use('/api/auth', authRoutes);
+app.use("/api/tenders", tenderRoutes);
+
 
 // Database connection
 mongoose.connect(MONGODB_URI)
