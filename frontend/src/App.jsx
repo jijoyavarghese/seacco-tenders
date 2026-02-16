@@ -1,6 +1,6 @@
 import React from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
-import Login from './pages/Login';
+import Login from './pages/login.jsx';
 import Dashboard from './pages/Dashboard';
 import Tenders from './pages/Tenders';
 import TenderDetail from './pages/TenderDetail';
